@@ -1,0 +1,23 @@
+# Dependencias y build
+node_modules/
+dist/
+
+# Certificados y claves de ARCA (NUNCA al repo)
+*.key
+*.crt
+*.csr
+*.pem
+
+# Entorno / secretos
+.env
+.env.local
+
+# PDFs de muestra (se regeneran con scripts/muestra-pdf.ts)
+muestras/
+
+# Comprobantes emitidos durante pruebas (los PDFs van al cwd)
+Factura-C-*.pdf
+NC-C-*.pdf
+
+# Varios
+.DS_Store
