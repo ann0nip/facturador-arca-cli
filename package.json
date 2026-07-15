@@ -18,10 +18,10 @@
   "author": "Juan Martin Gimenez",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ann0nip/facturador-arca.git"
+    "url": "git+https://github.com/ann0nip/facturador-arca-cli.git"
   },
-  "homepage": "https://github.com/ann0nip/facturador-arca#readme",
-  "bugs": "https://github.com/ann0nip/facturador-arca/issues",
+  "homepage": "https://github.com/ann0nip/facturador-arca-cli#readme",
+  "bugs": "https://github.com/ann0nip/facturador-arca-cli/issues",
   "type": "module",
   "bin": {
     "facturar": "dist/cli.js"

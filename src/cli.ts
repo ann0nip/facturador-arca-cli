@@ -40,7 +40,7 @@ Opciones de emisión:
   --cotizacion N       Fuerza el tipo de cambio (default: cotización oficial de ARCA)
   --si                 Emitir sin pedir confirmación (para scripts)
 
-Más info: https://github.com/ann0nip/facturador-arca`;
+Más info: https://github.com/ann0nip/facturador-arca-cli`;
 
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
