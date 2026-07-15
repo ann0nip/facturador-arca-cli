@@ -101,7 +101,24 @@ async function postHttp(
   headers: Record<string, string>,
   body: string
 ): Promise<string> {
-  const res = await fetch(url, { method: "POST", headers, body });
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers,
+      body,
+      signal: AbortSignal.timeout(60_000),
+    });
+  } catch (e) {
+    if (e instanceof Error && e.name === "TimeoutError") {
+      throw new WsfeError(
+        "WSFE no respondió en 60 segundos. OJO: si estabas emitiendo, verificá " +
+          "en ARCA (Mis Comprobantes) si la factura salió ANTES de reintentar, " +
+          "para no emitirla dos veces."
+      );
+    }
+    throw e;
+  }
   const texto = await res.text();
   // Los faults SOAP vienen con HTTP 500: el cuerpo igual trae el mensaje útil.
   if (!res.ok && !texto.includes("faultstring")) {

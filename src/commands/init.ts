@@ -145,7 +145,7 @@ export async function cmdInit(): Promise<void> {
     const sp = p.spinner();
     sp.start("Generando clave privada de 2048 bits (queda SOLO en tu máquina)");
     const { keyPem, csrPem } = generarKeyCsr(cuit, razonSocial, alias);
-    fs.mkdirSync(keysDir(), { recursive: true });
+    fs.mkdirSync(keysDir(), { recursive: true, mode: 0o700 });
     keyPath = path.join(keysDir(), "privada.key");
     certPath = path.join(keysDir(), "certificado.crt");
     const csrPath = path.join(keysDir(), "pedido.csr");

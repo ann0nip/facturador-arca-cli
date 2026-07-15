@@ -158,4 +158,29 @@ describe("templates", () => {
     expect(nombreTemplateValido("")).toBe(false);
     expect(() => guardarTemplate({ nombre: "../x", receptor: null })).toThrow(/inválido/);
   });
+
+  it("borrarTemplate NO permite path traversal (borraría el config)", () => {
+    guardarConfig({
+      cuit: 20123456786, puntoVenta: 1, razonSocial: "X",
+      concepto: 2, produccion: false, certPath: "/x", keyPath: "/x",
+    });
+    expect(borrarTemplate("../config")).toBe(false);
+    expect(cargarConfig()).not.toBeNull(); // el config sigue vivo
+  });
+
+  it("cargarTemplate valida un template editado a mano", () => {
+    const dir = path.join(tmpDir, "templates");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, "roto.json"),
+      JSON.stringify({ nombre: "roto", receptor: null, moneda: "EUR" })
+    );
+    expect(() => cargarTemplate("roto")).toThrow(/moneda inválida/);
+
+    fs.writeFileSync(
+      path.join(dir, "roto2.json"),
+      JSON.stringify({ nombre: "roto2", receptor: { docTipo: "80", docNro: 1, condIva: 1 } })
+    );
+    expect(() => cargarTemplate("roto2")).toThrow(/mal formado/);
+  });
 });

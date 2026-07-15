@@ -153,14 +153,23 @@ async function loginCms(cms: string, produccion: boolean): Promise<TicketAcceso>
   </soapenv:Body>
 </soapenv:Envelope>`;
 
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "text/xml; charset=utf-8",
-      SOAPAction: '""',
-    },
-    body: envelope,
-  });
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "text/xml; charset=utf-8",
+        SOAPAction: '""',
+      },
+      body: envelope,
+      signal: AbortSignal.timeout(60_000),
+    });
+  } catch (e) {
+    if (e instanceof Error && e.name === "TimeoutError") {
+      throw new WsaaError("WSAA no respondió en 60 segundos. Probá de nuevo en un rato.");
+    }
+    throw e;
+  }
   const texto = await res.text();
   // WSAA responde los faults con HTTP 500: el cuerpo se parsea SIEMPRE,
   // porque el faultstring es el mensaje útil para el usuario.
@@ -212,7 +221,8 @@ export async function obtenerTicket(opts: OpcionesTicket): Promise<TicketAcceso>
   const login = opts._login ?? loginCms;
   const ticket = await login(cms, opts.produccion);
 
-  fs.mkdirSync(opts.cacheDir, { recursive: true });
-  fs.writeFileSync(cachePath, JSON.stringify(ticket, null, 2) + "\n");
+  // El ticket ES una credencial (12 hs de validez): solo lo lee este usuario.
+  fs.mkdirSync(opts.cacheDir, { recursive: true, mode: 0o700 });
+  fs.writeFileSync(cachePath, JSON.stringify(ticket, null, 2) + "\n", { mode: 0o600 });
   return ticket;
 }

@@ -160,7 +160,24 @@ export function cargarTemplate(nombre: string): Template | null {
   if (!nombreTemplateValido(nombre)) return null;
   const p = templatePath(nombre);
   if (!fs.existsSync(p)) return null;
-  return JSON.parse(fs.readFileSync(p, "utf8")) as Template;
+  const t = JSON.parse(fs.readFileSync(p, "utf8")) as Template;
+  // Los templates son editables a mano: validar lo que después viaja a ARCA,
+  // con error legible acá en vez de un rechazo críptico del web service.
+  if (t.moneda !== undefined && t.moneda !== "PES" && t.moneda !== "DOL") {
+    throw new Error(
+      `El template «${nombre}» tiene una moneda inválida: «${t.moneda}» (usá PES o DOL).`
+    );
+  }
+  if (t.receptor !== null && t.receptor !== undefined) {
+    const { docTipo, docNro, condIva } = t.receptor;
+    if (![Number.isInteger(docTipo), Number.isInteger(docNro), Number.isInteger(condIva)].every(Boolean)) {
+      throw new Error(
+        `El template «${nombre}» tiene un receptor mal formado: docTipo, docNro y ` +
+          `condIva tienen que ser números (¿se editó a mano?).`
+      );
+    }
+  }
+  return t;
 }
 
 export function guardarTemplate(t: Template): void {
@@ -174,6 +191,9 @@ export function guardarTemplate(t: Template): void {
 }
 
 export function borrarTemplate(nombre: string): boolean {
+  // Validar SIEMPRE antes del path.join: sin esto, un nombre tipo
+  // "../config" borraría archivos fuera de templates/.
+  if (!nombreTemplateValido(nombre)) return false;
   const p = templatePath(nombre);
   if (!fs.existsSync(p)) return false;
   fs.unlinkSync(p);
