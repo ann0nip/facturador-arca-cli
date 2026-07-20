@@ -23,6 +23,7 @@ import {
   usaPeriodo,
 } from "./domain.js";
 import { textoTag } from "./wsaa.js";
+import { postXml } from "./http.js";
 
 const URL_WSFE = {
   homologacion: "https://wswhomo.afip.gov.ar/wsfev1/service.asmx",
@@ -101,14 +102,9 @@ async function postHttp(
   headers: Record<string, string>,
   body: string
 ): Promise<string> {
-  let res: Response;
+  let res: Awaited<ReturnType<typeof postXml>>;
   try {
-    res = await fetch(url, {
-      method: "POST",
-      headers,
-      body,
-      signal: AbortSignal.timeout(60_000),
-    });
+    res = await postXml(url, headers, body);
   } catch (e) {
     if (e instanceof Error && e.name === "TimeoutError") {
       throw new WsfeError(

@@ -20,6 +20,8 @@ import path from "node:path";
 
 import forge from "node-forge";
 
+import { postXml } from "./http.js";
+
 // ---------------------------------------------------------------------------
 // Endpoints
 // ---------------------------------------------------------------------------
@@ -153,17 +155,16 @@ async function loginCms(cms: string, produccion: boolean): Promise<TicketAcceso>
   </soapenv:Body>
 </soapenv:Envelope>`;
 
-  let res: Response;
+  let res: Awaited<ReturnType<typeof postXml>>;
   try {
-    res = await fetch(url, {
-      method: "POST",
-      headers: {
+    res = await postXml(
+      url,
+      {
         "Content-Type": "text/xml; charset=utf-8",
         SOAPAction: '""',
       },
-      body: envelope,
-      signal: AbortSignal.timeout(60_000),
-    });
+      envelope
+    );
   } catch (e) {
     if (e instanceof Error && e.name === "TimeoutError") {
       throw new WsaaError("WSAA no respondió en 60 segundos. Probá de nuevo en un rato.");

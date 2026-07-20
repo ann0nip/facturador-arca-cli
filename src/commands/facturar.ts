@@ -25,6 +25,7 @@ import {
   CONDICIONES_IVA,
   DOC_TIPO_CF,
   FACTURA_C,
+  MONEDA_DESC,
   RECEPTOR_CF,
   SIMBOLO_MONEDA,
   descripcionReceptor,
@@ -258,7 +259,7 @@ export async function cmdFacturar(montoTexto: string, resto: string[]): Promise<
   const lineas: string[] = [
     `Factura C — ${CONCEPTO_DESC[config.concepto]}`,
     `Receptor: ${t?.razonSocial ? `${t.razonSocial} — ` : ""}${descripcionReceptor(receptor)}`,
-    `Total: ${sim} ${fmtArs(monto)}` +
+    `Total (${MONEDA_DESC[moneda]}): ${sim} ${fmtArs(monto)}` +
       (moneda !== "PES" ? `  (≈ $ ${fmtArs(montoPesos)} al cambio ${cotizacion})` : ""),
     `Detalle: ${descripcion}`,
     `Fecha: ${fmtFecha(fecha)}${cmpFecha(fecha, hoyAr()) === 0 ? " (hoy)" : ""}`,
