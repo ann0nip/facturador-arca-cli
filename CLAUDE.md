@@ -90,3 +90,24 @@ el CUIT de testing compartido del Afip SDK NO sirve fuera de su proxy.
   soporta NC en wsfe/pdf/store; falta solo el comando).
 - Copias ORIGINAL/DUPLICADO/TRIPLICADO en el PDF (hoy solo ORIGINAL).
 - Envío del PDF por email al receptor (el template ya tiene el campo email).
+- ~~Mostrar el acumulado real / alerta de categoría de monotributo vía WSFE~~
+  **INVESTIGADO Y DESCARTADO (jul-2026).** La idea era mostrar cuánto lleva
+  facturado el usuario en 12 meses contra el tope de su categoría, tomando el
+  acumulado de ARCA (no del log local) para que incluya lo facturado por el
+  portal web. No hay fuente confiable:
+  - Comprobantes en Línea (el portal web) usa **otro punto de venta** con su
+    propia secuencia (NOTAS-ARCA §2), y `FEParamGetPtosVenta`/`FECompConsultar`
+    del WSFEv1 solo ven los comprobantes autorizados por web service — el PV de
+    la web ni aparece. O sea: la reconstrucción WSFE tendría el mismo punto
+    ciego que el log local (no vería lo emitido por la web).
+  - No hay WS oficial de "todo lo que emití" (Mis Comprobantes / Libro IVA
+    Digital son solo portal web, sin API pública limpia).
+  - No hay API, ni oficial ni de terceros confiable, para la **tabla de topes**
+    por categoría (solo la página HTML afip.gob.ar/monotributo/categorias.asp,
+    que se reajusta por movilidad feb/ago).
+
+  La alerta actual (`facturar.ts`, basada en el log local + `monotributoTope`
+  de la config) queda como está, con su limitación conocida: solo cuenta lo
+  emitido con este CLI. No re-proponer el enfoque WSFE sin antes verificar
+  contra la cuenta real que el WS efectivamente devuelve los comprobantes de
+  Comprobantes en Línea (casi seguro que no).
