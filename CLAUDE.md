@@ -111,3 +111,12 @@ el CUIT de testing compartido del Afip SDK NO sirve fuera de su proxy.
   emitido con este CLI. No re-proponer el enfoque WSFE sin antes verificar
   contra la cuenta real que el WS efectivamente devuelve los comprobantes de
   Comprobantes en Línea (casi seguro que no).
+
+  **Confirmado empíricamente (27-jul-2026):** una factura real de producción
+  (PV 5, N°2, USD 3000, CAE [CAE real omitido], emitida por este CLI vía WSFEv1)
+  no aparece en el listado de RCEL (`fe.afip.gob.ar/rcel/.../filtrarComprobantesGenerados.do`,
+  la app de "Comprobantes en Línea" para monotributistas) pese a que el QR del
+  PDF valida el comprobante como auténtico contra ARCA. Confirma la sospecha
+  de arriba: RCEL solo lista lo generado por ESE canal, no lo emitido por
+  WSFEv1. Ante una duda de "¿esta factura existe de verdad?", la fuente de
+  verdad es el QR (verificación oficial RG 4892), no el listado de RCEL.
