@@ -19,6 +19,9 @@ el conocimiento de dominio validado contra el WSFE real vive en su
 - **Firma local** (WSAA + WSFE directo), nada de Afip SDK hosted.
 - MVP: init (wizard key+CSR), template add/list, facturar con PDF+QR, log
   local JSONL. NC / resumen / CSV / email = v2.
+- **Factura E (exportación)**: implementada. La dispara el template (si tiene
+  bloque `exterior`, se emite E por WSFEX en vez de C por WSFEv1) — sin flag
+  nuevo. Ver la sección de reglas de dominio más abajo.
 - Dependencias **JS puro únicamente** (sin módulos nativos): node-forge,
   pdf-lib, qrcode, @clack/prompts, picocolors.
 - Español rioplatense en todo lo de cara al usuario.
@@ -39,7 +42,8 @@ src/commands/         ← capa de conversación (prompts, preview, confirmación
 src/core/             ← lógica sin UI:
   domain.ts           ←   parseo/validación/formato puro (sin red ni disco)
   wsaa.ts             ←   autenticación: TRA + firma CMS + cache ticket 12 h
-  wsfe.ts             ←   emisión SOAP: FECAESolicitar / último autorizado
+  wsfe.ts             ←   Factura C: FECAESolicitar / último autorizado (WSFEv1)
+  wsfex.ts            ←   Factura E: FEXAuthorize (WSFEX, OTRO web service)
   pdf.ts              ←   PDF local con pdf-lib + qrcode (RG 4892)
   store.ts            ←   log local de comprobantes (JSONL)
 src/config.ts         ← config.json (emisor) + templates/*.json (receptores)
@@ -72,6 +76,44 @@ argv ni prompts. `commands/` solo conversa.
 - Homologación por default; producción solo explícita. La emisión es
   irreversible: nunca dejar un error en silencio después de obtener el CAE
   (patrón: emitir → loguear → PDF, avisando qué paso falló).
+
+### Factura E (exportación) — WSFEX, no WSFEv1
+
+Verificado contra homologación en ago-2026 (detalle y evidencia en
+`docs/factura-e-plan.md`). **Ninguna de estas reglas está en el WSDL, y varias
+lo contradicen** — no re-derivarlas de un manual.
+
+- El WSFEv1 **no conoce el tipo 19**: `FEParamGetTiposCbte` devuelve 36 tipos y
+  ninguno de exportación. La E va por **WSFEX** (`wsfexv1`, namespace en
+  minúscula `http://ar.gov.afip.dif.fexv1/`, servicio WSAA `wsfex`).
+- WSFEX **no tiene** `ImpNeto`/`ImpOpEx`/`ImpIVA`, ni `Concepto`, ni
+  `FchServDesde/Hasta`. Tiene `Imp_total`, `Tipo_expo` y `Fecha_pago`.
+- `Permiso_existente`: **el tag va SIEMPRE**; para `Tipo_expo` 2 o 4 va
+  **vacío**. Omitirlo → error 1550. Mandar `"N"` → error 1550 también.
+- `Fecha_pago` es **obligatoria** para servicios (error 1672) y no puede ser
+  anterior a la emisión (1674). Default: la fecha del comprobante.
+- Ventana de fechas: **±5 días** (error 1500) — acepta **futuro**, a diferencia
+  de la Factura C. Y las fechas futuras bloquean después la numeración
+  cronológica (error 1535, el "10016" de WSFEX).
+- `Forma_pago` (ej. "Criptomonedas") **SÍ viaja a ARCA**: no confundir con
+  `condicionVenta` de la Factura C, que es solo del PDF.
+- Los `Items` también viajan (descripción, cantidad, precio): dejan de ser
+  cosméticos.
+- El request lleva un `Id` de idempotencia (`FEXGetLast_ID` + 1). Reenviar el
+  mismo `Id` devuelve el CAE original con `Reproceso=S` en vez de duplicar:
+  **es la forma correcta de recuperarse de un timeout**, no reintentar a ciegas.
+- **CUIT País**: 11 dígitos con prefijo 50 (persona física) / 51 / 55 (persona
+  jurídica). ⚠️ **NO se distinguen por dígito verificador**: 774 de los 777 de
+  la tabla real lo cumplen, así que `parsearCuit()` los daría por CUIT
+  argentinos. Discriminar por prefijo (`esCuitPais`), nunca por el algoritmo.
+- En el QR (RG 4892) el CUIT País va como `tipoDocRec: 80` — mismo payload de
+  13 claves que la Factura C.
+- **Punto de venta aparte, obligatorio**: ARCA exige que los PV de
+  «Comprobantes de Exportación - Webservices», «...- Comprobante en Línea» y
+  «Factura Electrónica - Monotributo - Webservices» sean distintos entre sí.
+  Homologación NO valida el PV; producción sí.
+- El certificado necesita el servicio `wsfex` autorizado aparte de `wsfe`
+  (WSASS en homologación, Administrador de Relaciones en producción).
 
 ## Estado / pendientes
 
