@@ -9,6 +9,7 @@ import {
   ultimoAutorizado,
   ultimoIdRequest,
   cotizacionOficial,
+  consultarComprobante,
   WsfexError,
   type AuthWsfex,
   type ExportacionParams,
@@ -375,5 +376,86 @@ describe("emitirExportacion", () => {
       return respRechazado;
     };
     await expect(emitirExportacion(auth, false, base, post)).rejects.toThrow(WsfexError);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Recuperación de una emisión que quedó en duda (timeout / corte de red)
+// ---------------------------------------------------------------------------
+const respGetCmpOk = envuelto(
+  `<FEXGetCMPResponse xmlns="http://ar.gov.afip.dif.fexv1"><FEXResultGet>
+    <Cbte_tipo>19</Cbte_tipo><Punto_vta>6</Punto_vta><Cbte_nro>8</Cbte_nro>
+    <Cae>75316312117383</Cae><Fch_venc_Cae>20260806</Fch_venc_Cae>
+    <Fecha_cbte>20260806</Fecha_cbte></FEXResultGet>${sinError}</FEXGetCMPResponse>`
+);
+
+const respGetCmpNoExiste = envuelto(
+  `<FEXGetCMPResponse xmlns="http://ar.gov.afip.dif.fexv1">
+    <FEXErr><ErrCode>1005</ErrCode><ErrMsg>No existe el comprobante consultado</ErrMsg></FEXErr>
+  </FEXGetCMPResponse>`
+);
+
+/** Un post que responde las consultas y corta la conexión al autorizar. */
+const postQueSeCorta = (respuestaGetCmp?: string): PostFn => {
+  return async (_url, headers) => {
+    const m = headers.SOAPAction;
+    if (m.includes("FEXGetLast_CMP")) return respUltimo;
+    if (m.includes("FEXGetLast_ID")) return respUltimoId;
+    if (m.includes("FEXGetCMP")) {
+      if (respuestaGetCmp === undefined) throw new Error("ARCA sigue sin responder");
+      return respuestaGetCmp;
+    }
+    throw new WsfexError("WSFEX no respondió en 60 segundos.", 0, true);
+  };
+};
+
+describe("consultarComprobante", () => {
+  it("devuelve CAE y vencimiento de un comprobante existente", async () => {
+    const r = await consultarComprobante(auth, false, 19, 6, 8, postFijo(respGetCmpOk));
+    expect(r).toEqual({ cae: "75316312117383", caeVto: { y: 2026, m: 8, d: 6 } });
+  });
+
+  it("null si el comprobante no existe (el FEXErr es la respuesta, no una falla)", async () => {
+    expect(await consultarComprobante(auth, false, 19, 6, 8, postFijo(respGetCmpNoExiste))).toBeNull();
+  });
+});
+
+describe("emitirExportacion — resultado indeterminado", () => {
+  it("si el comprobante SÍ se emitió, lo recupera en vez de fallar", async () => {
+    // Este es el caso peligroso: sin esto el usuario reintenta y duplica.
+    const r = await emitirExportacion(auth, false, base, postQueSeCorta(respGetCmpOk));
+    expect(r.cae).toBe("75316312117383");
+    expect(r.numero).toBe(8);
+    expect(r.id).toBe(42);
+    expect(r.recuperado).toBe(true);
+  });
+
+  it("si NO se emitió, lo dice explícito y habilita el reintento", async () => {
+    await expect(
+      emitirExportacion(auth, false, base, postQueSeCorta(respGetCmpNoExiste))
+    ).rejects.toThrow(/NO se emitió[\s\S]*reintentar sin riesgo/);
+  });
+
+  it("si tampoco se puede verificar, el error trae el número y el Id intentados", async () => {
+    // Lo único que sirve para no duplicar es saber qué número se intentó.
+    const err = await emitirExportacion(auth, false, base, postQueSeCorta()).catch((e) => e);
+    expect(err).toBeInstanceOf(WsfexError);
+    expect(err.message).toMatch(/N° 8/);
+    expect(err.message).toMatch(/Id de request 42/);
+    expect(err.message).toMatch(/NO reintentes a ciegas/);
+    expect(err.indeterminado).toBe(true);
+  });
+
+  it("un rechazo de ARCA no dispara la recuperación (no se emitió nada)", async () => {
+    let consultas = 0;
+    const post: PostFn = async (_url, headers) => {
+      const m = headers.SOAPAction;
+      if (m.includes("FEXGetLast_CMP")) return respUltimo;
+      if (m.includes("FEXGetLast_ID")) return respUltimoId;
+      if (m.includes("FEXGetCMP")) consultas++;
+      return respRechazado;
+    };
+    await expect(emitirExportacion(auth, false, base, post)).rejects.toThrow(/Dst_cmp es invalido/);
+    expect(consultas, "no hay nada que verificar tras un rechazo").toBe(0);
   });
 });

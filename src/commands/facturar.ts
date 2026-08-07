@@ -617,6 +617,12 @@ async function facturarExportacion(
     `✅ Emitida: ${numeroCompleto(ptoVta, res.numero)} — CAE ${res.cae} ` +
       `(vto ${fmtFecha(res.caeVto)})`
   );
+  if (res.recuperado) {
+    p.log.warn(
+      "La conexión se cortó mientras emitía, pero el comprobante SÍ se había emitido: " +
+        "le pedí el CAE a ARCA en vez de reintentar. No se duplicó nada."
+    );
+  }
   if (res.reproceso) {
     p.log.warn(
       "ARCA devolvió un comprobante YA emitido (Reproceso=S): no se duplicó nada, " +

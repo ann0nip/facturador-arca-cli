@@ -131,3 +131,14 @@ describe("exportación en el log", () => {
     expect(totalFacturado12m(base.produccion, "2026-07-15")).toBe(3000000);
   });
 });
+
+describe("permisos del log", () => {
+  it.skipIf(process.platform === "win32")(
+    "se crea solo para el dueño: tiene datos fiscales propios y de terceros",
+    () => {
+      registrarComprobante(base);
+      expect(fs.statSync(logPath()).mode & 0o777).toBe(0o600);
+      expect(fs.statSync(path.dirname(logPath())).mode & 0o777).toBe(0o700);
+    }
+  );
+});

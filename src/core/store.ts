@@ -65,11 +65,18 @@ export interface Comprobante {
   pdfPath?: string;
 }
 
-/** Agrega el comprobante al log. Lanza si falla (el que llama DEBE avisar). */
+/**
+ * Agrega el comprobante al log. Lanza si falla (el que llama DEBE avisar).
+ *
+ * Solo lo lee el dueño (0600): el log tiene datos fiscales propios y de
+ * terceros — CUIT/DNI de los receptores, y nombre y domicilio de los clientes
+ * del exterior en las Facturas E. El `mode` solo aplica al crear el archivo:
+ * un log viejo conserva sus permisos (ver `chmod` en el README).
+ */
 export function registrarComprobante(c: Comprobante): void {
   const p = logPath();
-  fs.mkdirSync(path.dirname(p), { recursive: true });
-  fs.appendFileSync(p, JSON.stringify(c) + "\n");
+  fs.mkdirSync(path.dirname(p), { recursive: true, mode: 0o700 });
+  fs.appendFileSync(p, JSON.stringify(c) + "\n", { mode: 0o600 });
 }
 
 /** Todos los comprobantes del log (las líneas corruptas se saltean). */

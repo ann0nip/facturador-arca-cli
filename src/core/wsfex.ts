@@ -63,8 +63,14 @@ export interface AuthWsfex {
 // ---------------------------------------------------------------------------
 export class WsfexError extends Error {
   readonly codigo: number;
+  /**
+   * true cuando NO sabemos si el comprobante llegó a emitirse (timeout, corte
+   * de red). Es distinto de un rechazo: si ARCA contestó "R", no se emitió
+   * nada. Acá el estado quedó en duda y hay que verificar antes de reintentar.
+   */
+  readonly indeterminado: boolean;
 
-  constructor(mensaje: string, codigo = 0) {
+  constructor(mensaje: string, codigo = 0, indeterminado = false) {
     let texto = codigo === 0 ? mensaje : `[${codigo}] ${mensaje}`;
     if (codigo === 1800) {
       texto +=
@@ -91,6 +97,7 @@ export class WsfexError extends Error {
     super(texto);
     this.name = "WsfexError";
     this.codigo = codigo;
+    this.indeterminado = indeterminado;
   }
 }
 
@@ -139,18 +146,18 @@ async function postHttp(
   try {
     res = await postXml(url, headers, body);
   } catch (e) {
-    if (e instanceof Error && e.name === "TimeoutError") {
-      throw new WsfexError(
-        "WSFEX no respondió en 60 segundos. Si estabas emitiendo, NO reintentes a " +
-          "ciegas: reenviá el MISMO Id de request (la respuesta trae Reproceso=S y " +
-          "devuelve el CAE original en vez de duplicar el comprobante)."
-      );
-    }
-    throw e;
+    // Timeout o corte de red: la petición pudo haber llegado igual, así que
+    // el resultado queda INDETERMINADO. emitirExportacion() se encarga de
+    // averiguar qué pasó en vez de dejarle el problema al usuario.
+    const detalle =
+      e instanceof Error && e.name === "TimeoutError"
+        ? "WSFEX no respondió en 60 segundos."
+        : `Se cortó la conexión con WSFEX: ${e instanceof Error ? e.message : e}`;
+    throw new WsfexError(detalle, 0, true);
   }
   const texto = await res.text();
   if (!res.ok && !texto.includes("faultstring")) {
-    throw new WsfexError(`WSFEX devolvió HTTP ${res.status}:\n${texto.slice(0, 500)}`);
+    throw new WsfexError(`WSFEX devolvió HTTP ${res.status}:\n${texto.slice(0, 500)}`, 0, true);
   }
   return texto;
 }
@@ -309,6 +316,38 @@ export async function cuitsPais(
   return filas(xml, "ClsFEXResponse_DST_cuit", ["DST_CUIT", "DST_Ds"])
     .map((f) => ({ cuitPais: Number(f.DST_CUIT), descripcion: f.DST_Ds }))
     .filter((c) => Number.isInteger(c.cuitPais) && c.descripcion !== "");
+}
+
+/**
+ * Trae de ARCA un comprobante ya autorizado (FEXGetCMP). null si ese número
+ * todavía no existe.
+ *
+ * Es la consulta que desempata después de un timeout: dice si el comprobante
+ * llegó a emitirse o no. Un error de red acá SÍ se propaga — "no pude
+ * preguntar" no es lo mismo que "no existe".
+ */
+export async function consultarComprobante(
+  auth: AuthWsfex,
+  produccion: boolean,
+  cbteTipo: number,
+  ptoVta: number,
+  numero: number,
+  _post?: PostFn
+): Promise<{ cae: string; caeVto: Fecha } | null> {
+  const xml = await llamar(
+    "FEXGetCMP",
+    `${xmlAuth(auth)}<ar:Cmp><ar:Cbte_tipo>${cbteTipo}</ar:Cbte_tipo>` +
+      `<ar:Punto_vta>${ptoVta}</ar:Punto_vta><ar:Cbte_nro>${numero}</ar:Cbte_nro></ar:Cmp>`,
+    produccion,
+    _post
+  );
+  // Si el comprobante no existe, ARCA contesta con un FEXErr: eso no es una
+  // falla, es la respuesta "todavía no está".
+  if (extraerError(xml) !== null) return null;
+  const cae = textoTag(xml, "Cae");
+  const caeVto = fechaFromInt((textoTag(xml, "Fch_venc_Cae") ?? "").trim());
+  if (!cae?.trim() || !caeVto) return null;
+  return { cae: cae.trim(), caeVto };
 }
 
 // ---------------------------------------------------------------------------
@@ -472,6 +511,11 @@ export interface ResultadoExportacion {
   id: number;
   /** "S" si ARCA devolvió un comprobante ya emitido en vez de crear uno nuevo. */
   reproceso: boolean;
+  /**
+   * true si el CAE no vino de la emisión sino de consultarlo después de un
+   * timeout: el comprobante existía igual. El que llama debe avisarlo.
+   */
+  recuperado?: boolean;
   /** Motivos u observaciones no bloqueantes que ARCA adjuntó al aprobar. */
   observaciones: string[];
 }
@@ -524,6 +568,12 @@ export async function autorizarExportacion(
  * y autoriza el siguiente. Es LA operación irreversible — si devuelve OK, el
  * comprobante existe en ARCA, y todo lo que siga (log, PDF) debe avisar
  * explícito si falla, nunca esconder el error.
+ *
+ * Si la llamada queda en el aire (timeout, corte de red), NO deja el problema
+ * abierto: le pregunta a ARCA si el comprobante existe. Si existe, lo devuelve
+ * marcado como `recuperado` para que igual se loguee y se genere el PDF; si no
+ * existe, el error dice el número y el Id que se intentaron, que es lo único
+ * que sirve para reintentar sin duplicar.
  */
 export async function emitirExportacion(
   auth: AuthWsfex,
@@ -533,7 +583,48 @@ export async function emitirExportacion(
 ): Promise<ResultadoExportacion> {
   const ultimo = await ultimoAutorizado(auth, produccion, p.ptoVta, p.cbteTipo, _post);
   const ultimoId = await ultimoIdRequest(auth, produccion, _post);
-  return autorizarExportacion(auth, produccion, p, ultimo + 1, ultimoId + 1, _post);
+  const numero = ultimo + 1;
+  const id = ultimoId + 1;
+
+  try {
+    return await autorizarExportacion(auth, produccion, p, numero, id, _post);
+  } catch (e) {
+    if (!(e instanceof WsfexError) || !e.indeterminado) throw e;
+
+    // Quedó en duda: preguntar antes de que el usuario reintente y duplique.
+    let existente: { cae: string; caeVto: Fecha } | null = null;
+    try {
+      existente = await consultarComprobante(auth, produccion, p.cbteTipo, p.ptoVta, numero, _post);
+    } catch {
+      // No pudimos verificar. Eso NO significa que no se emitió: el mensaje
+      // de abajo tiene que dejarlo clarísimo.
+      throw new WsfexError(
+        `${e.message}\n\n⚠️ Intenté emitir el comprobante N° ${numero} (Id de request ${id}) y ` +
+          `tampoco pude verificar si salió.\n` +
+          `NO reintentes a ciegas: podrías emitirlo dos veces. Volvé a correr el comando ` +
+          `cuando ARCA responda — si el N° ${numero} ya existe, se va a ver en el próximo intento.`,
+        e.codigo,
+        true
+      );
+    }
+
+    if (existente !== null) {
+      return {
+        numero,
+        cae: existente.cae,
+        caeVto: existente.caeVto,
+        id,
+        reproceso: false,
+        recuperado: true,
+        observaciones: [],
+      };
+    }
+    throw new WsfexError(
+      `${e.message}\n\n✅ Verifiqué con ARCA: el comprobante N° ${numero} NO se emitió ` +
+        `(Id de request ${id}). Podés reintentar sin riesgo de duplicar.`,
+      e.codigo
+    );
+  }
 }
 
 /** Los parámetros por default de una exportación de SERVICIOS (el caso base). */

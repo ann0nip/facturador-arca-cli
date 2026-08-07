@@ -261,3 +261,29 @@ describe("template de exportación", () => {
     });
   });
 });
+
+describe("permisos de los archivos de config", () => {
+  const modo = (p: string) => fs.statSync(p).mode & 0o777;
+
+  it.skipIf(process.platform === "win32")("config.json se crea 0600", () => {
+    guardarConfig({
+      cuit: 20123456786,
+      puntoVenta: 3,
+      razonSocial: "PEREZ JUAN",
+      concepto: 2,
+      produccion: false,
+      certPath: "/tmp/cert.crt",
+      keyPath: "/tmp/privada.key",
+    });
+    expect(modo(path.join(tmpDir, "config.json"))).toBe(0o600);
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "los templates también: guardan datos de un tercero",
+    () => {
+      guardarTemplate({ nombre: "acme", receptor: null });
+      expect(modo(path.join(tmpDir, "templates", "acme.json"))).toBe(0o600);
+      expect(modo(path.join(tmpDir, "templates"))).toBe(0o700);
+    }
+  );
+});

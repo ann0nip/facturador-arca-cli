@@ -158,6 +158,13 @@ archivo.
 
 - La **private key se genera en tu máquina** (permisos 600) y jamás viaja a
   ningún lado: la firma criptográfica de la autenticación pasa localmente.
+- **Todo lo que tiene datos fiscales se crea solo para vos** (`0600`): config,
+  templates y log de comprobantes, además de las claves y los tickets. Si
+  venís de una versión anterior a la 0.2.0 tus archivos quedaron `0644`; se
+  arregla una vez con:
+  ```bash
+  chmod -R go-rwx ~/.config/facturador     # Windows: %APPDATA%\facturador
+  ```
 - **Cero telemetría, cero servicios propios**: las únicas conexiones son a
   `*.afip.gob.ar`.
 - Allowlist natural: el que puede facturar es el que tiene acceso a tu

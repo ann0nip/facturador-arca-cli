@@ -134,8 +134,8 @@ export function cargarConfig(): Emisor | null {
 }
 
 export function guardarConfig(e: Emisor): void {
-  fs.mkdirSync(configDir(), { recursive: true });
-  fs.writeFileSync(configPath(), JSON.stringify(e, null, 2) + "\n");
+  fs.mkdirSync(configDir(), { recursive: true, mode: 0o700 });
+  fs.writeFileSync(configPath(), JSON.stringify(e, null, 2) + "\n", { mode: 0o600 });
 }
 
 // ---------------------------------------------------------------------------
@@ -256,8 +256,10 @@ export function guardarTemplate(t: Template): void {
       `Nombre de template inválido: «${t.nombre}» (solo letras, números y guiones).`
     );
   }
-  fs.mkdirSync(templatesDir(), { recursive: true });
-  fs.writeFileSync(templatePath(t.nombre), JSON.stringify(t, null, 2) + "\n");
+  // 0600: un template guarda datos de un tercero (CUIT, razón social,
+  // domicilio; y en los de exportación, los del cliente del exterior).
+  fs.mkdirSync(templatesDir(), { recursive: true, mode: 0o700 });
+  fs.writeFileSync(templatePath(t.nombre), JSON.stringify(t, null, 2) + "\n", { mode: 0o600 });
 }
 
 export function borrarTemplate(nombre: string): boolean {
