@@ -18,8 +18,15 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import type { Concepto, Moneda, Receptor } from "./core/domain.js";
-import { CONDICIONES_IVA, DOC_TIPO_CF } from "./core/domain.js";
+import type {
+  Concepto,
+  Idioma,
+  Moneda,
+  Receptor,
+  ReceptorExterior,
+  TipoExpo,
+} from "./core/domain.js";
+import { CONDICIONES_IVA, DOC_TIPO_CF, esCuitPais } from "./core/domain.js";
 
 // ---------------------------------------------------------------------------
 // Rutas
@@ -49,6 +56,13 @@ export interface Emisor {
   cuit: number;
   /** Punto de venta tipo Web Service (NO el de Comprobantes en Línea). */
   puntoVenta: number;
+  /**
+   * Punto de venta para Factura E. ARCA obliga a que sea OTRO: el de arriba se
+   * da de alta como «Factura Electrónica - Monotributo - Webservices» y este
+   * como «Comprobantes de Exportación - Webservices». Vacío = no se pueden
+   * emitir comprobantes de exportación todavía.
+   */
+  puntoVentaExportacion?: number;
   /** Nombre tal como figura en ARCA (va impreso en el PDF). */
   razonSocial: string;
   domicilio?: string;
@@ -127,11 +141,40 @@ export function guardarConfig(e: Emisor): void {
 // ---------------------------------------------------------------------------
 // Templates (receptores con nombre)
 // ---------------------------------------------------------------------------
+/**
+ * Los datos de un cliente del EXTERIOR: convierten al template en una
+ * Factura E, que se emite por WSFEX en vez del WSFEv1.
+ *
+ * Los nombres de país (`cuitPaisDesc`, `paisDestinoDesc`) se guardan al crear
+ * el template para que el PDF no dependa de la red: son los que devuelven
+ * FEXGetPARAM_DST_CUIT y FEXGetPARAM_DST_pais.
+ */
+export interface DatosExportacion extends ReceptorExterior {
+  /** "SUECIA - Persona Jurídica", tal como lo imprime ARCA junto al CUIT País. */
+  cuitPaisDesc?: string;
+  /** "SUECIA": el "Destino del Comprobante" del PDF. */
+  paisDestinoDesc?: string;
+  /** 1 = Bienes, 2 = Servicios, 4 = Otros. Default: 2. */
+  tipoExpo?: TipoExpo;
+  /** 1 = Español, 2 = Inglés, 3 = Portugués. Default: 1. */
+  idioma?: Idioma;
+  /**
+   * Medio de pago, ej. "Criptomonedas". OJO: a diferencia de `condicionVenta`
+   * de la Factura C, este campo SÍ viaja a ARCA (Forma_pago del WSFEX).
+   */
+  formaPago?: string;
+  /** Solo exportación de bienes. */
+  incoterms?: string;
+  incotermsDesc?: string;
+}
+
 export interface Template {
   /** Slug: el nombre que se tipea en `facturar 1000 <nombre>`. */
   nombre: string;
-  /** null = consumidor final anónimo. */
+  /** null = consumidor final anónimo. Se ignora si hay `exterior`. */
   receptor: Receptor | null;
+  /** Presente ⇒ es un cliente del exterior ⇒ Factura E por WSFEX. */
+  exterior?: DatosExportacion;
   /** Nombre / razón social del receptor, para imprimir en el PDF. */
   razonSocial?: string;
   /** Domicilio del receptor, para el PDF. */
@@ -177,7 +220,34 @@ export function cargarTemplate(nombre: string): Template | null {
       );
     }
   }
+  if (t.exterior !== undefined) {
+    validarExportacion(nombre, t.exterior);
+  }
   return t;
+}
+
+/** Chequeos del bloque de exportación, con mensajes para humanos. */
+function validarExportacion(nombre: string, e: DatosExportacion): void {
+  const mal = (detalle: string): never => {
+    throw new Error(`El template «${nombre}» tiene el bloque «exterior» mal formado: ${detalle}`);
+  };
+  if (!esCuitPais(e.cuitPais)) {
+    mal(
+      `cuitPais «${e.cuitPais}» no es un CUIT País (11 dígitos que arrancan con 50, 51 o 55). ` +
+        `El del cliente lo da ARCA en la tabla de CUIT País, no lo inventes.`
+    );
+  }
+  if (!e.nombre?.trim()) mal("falta nombre (el campo Cliente que va a ARCA).");
+  if (!e.domicilio?.trim()) mal("falta domicilio del cliente en el exterior.");
+  if (!Number.isInteger(e.paisDestino) || e.paisDestino <= 0) {
+    mal("paisDestino tiene que ser el código numérico de país que usa ARCA.");
+  }
+  if (e.tipoExpo !== undefined && ![1, 2, 4].includes(e.tipoExpo)) {
+    mal(`tipoExpo «${e.tipoExpo}» inválido (1 = bienes, 2 = servicios, 4 = otros).`);
+  }
+  if (e.idioma !== undefined && ![1, 2, 3].includes(e.idioma)) {
+    mal(`idioma «${e.idioma}» inválido (1 = español, 2 = inglés, 3 = portugués).`);
+  }
 }
 
 export function guardarTemplate(t: Template): void {
@@ -212,6 +282,10 @@ export function listarTemplates(): Template[] {
 
 /** Descripción humana de un template para listados y previews. */
 export function descripcionTemplate(t: Template): string {
+  if (t.exterior) {
+    const donde = t.exterior.paisDestinoDesc ?? `país ${t.exterior.paisDestino}`;
+    return `Exterior (${donde}) — CUIT País ${t.exterior.cuitPais}`;
+  }
   if (t.receptor === null || t.receptor.docTipo === DOC_TIPO_CF) {
     return "Consumidor Final";
   }

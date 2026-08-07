@@ -22,8 +22,12 @@ import {
   DOC_TIPO_CF,
   DOC_TIPO_CUIT,
   FACTURA_C,
+  FACTURA_E,
   NOTA_CREDITO_C,
+  NOTA_CREDITO_E,
+  NOTA_DEBITO_E,
   SIMBOLO_MONEDA,
+  esExportacion,
   fmtFecha,
   nombreComprobante,
   numeroCompleto,
@@ -68,6 +72,23 @@ export interface DatosPdf {
   caeVto: Fecha;
   /** Para NC: la factura que anula/ajusta. */
   asociado?: { ptoVta: number; nro: number };
+  /**
+   * Presente ⇒ Factura E: cambia el receptor (CUIT País en vez de CUIT +
+   * condición de IVA), agrega los bloques de destino y forma de pago, y usa
+   * una tabla de detalle distinta. `receptor` se ignora.
+   */
+  exterior?: {
+    cuitPais: number;
+    nombre: string;
+    domicilio: string;
+    /** "SUECIA - Persona Jurídica": lo que ARCA imprime junto al CUIT País. */
+    cuitPaisDesc?: string;
+    /** "SUECIA": el "Destino del Comprobante". */
+    paisDestinoDesc?: string;
+    formaPago?: string;
+    fechaPago?: Fecha;
+    incoterms?: string;
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -83,11 +104,18 @@ const GRIS_TEXTO = rgb(0.35, 0.35, 0.35);
 /** Segunda columna de los bloques de dos columnas (receptor). */
 const X_COL2 = X0 + 220;
 
-const COPIAS = ["ORIGINAL", "DUPLICADO", "TRIPLICADO"] as const;
+// La tercera copia se llama distinto en exportación: el facturador de ARCA
+// imprime ORIGINAL/DUPLICADO/COPIA para la E y .../TRIPLICADO para la C.
+const COPIAS_C = ["ORIGINAL", "DUPLICADO", "TRIPLICADO"] as const;
+const COPIAS_E = ["ORIGINAL", "DUPLICADO", "COPIA"] as const;
 
-const TIPOS_CBTE: Record<number, [string, string]> = {
-  [FACTURA_C]: ["FACTURA", "CÓD. 011"],
-  [NOTA_CREDITO_C]: ["NOTA DE CRÉDITO", "CÓD. 013"],
+/** [título, código impreso, letra del recuadro]. */
+const TIPOS_CBTE: Record<number, [string, string, string]> = {
+  [FACTURA_C]: ["FACTURA", "CÓD. 011", "C"],
+  [NOTA_CREDITO_C]: ["NOTA DE CRÉDITO", "CÓD. 013", "C"],
+  [FACTURA_E]: ["FACTURA DE EXPORTACIÓN", "COD. 19", "E"],
+  [NOTA_DEBITO_E]: ["NOTA DE DÉBITO DE EXPORTACIÓN", "COD. 20", "E"],
+  [NOTA_CREDITO_E]: ["NOTA DE CRÉDITO DE EXPORTACIÓN", "COD. 21", "E"],
 };
 
 const MONEDA_PDF: Record<Moneda, string> = {
@@ -109,6 +137,17 @@ const COND_IVA_PDF: Record<number, string> = {
 function fmtImporte(n: number): string {
   return n.toFixed(2).replace(".", ",");
 }
+
+/** 1 → "1,000000" — cantidad y precio unitario de la Factura E van con 6 decimales. */
+function fmtSeisDecimales(n: number): string {
+  return n.toFixed(6).replace(".", ",");
+}
+
+/** Nombre corto de la divisa, como lo rotula la Factura E ("$ - Pesos Argentinos"). */
+const MONEDA_PDF_CORTA: Record<Moneda, string> = {
+  PES: "$ - Pesos Argentinos",
+  DOL: "USD - Dólar Estadounidense",
+};
 
 /**
  * Las fuentes estándar de PDF solo soportan WinAnsi (Latin-1): las tildes y
@@ -147,7 +186,12 @@ export async function generarPdf(d: DatosPdf): Promise<Uint8Array> {
     negritaCursiva: await doc.embedFont(StandardFonts.HelveticaBoldOblique),
   };
 
-  const receptorQr = d.receptor ?? { docTipo: DOC_TIPO_CF, docNro: 0, condIva: 0 };
+  // En la Factura E el CUIT País viaja en el QR como DocTipo 80 (CUIT), sin
+  // tipo de documento especial: verificado decodificando el QR de una Factura
+  // E real emitida por ARCA (ver docs/factura-e-plan.md §5.1).
+  const receptorQr = d.exterior
+    ? { docTipo: DOC_TIPO_CUIT, docNro: d.exterior.cuitPais }
+    : (d.receptor ?? { docTipo: DOC_TIPO_CF, docNro: 0 });
   const urlQr = urlQrArca({
     fecha: d.fecha,
     cuitEmisor: d.emisor.cuit,
@@ -165,7 +209,8 @@ export async function generarPdf(d: DatosPdf): Promise<Uint8Array> {
   const qrImg = await doc.embedPng(qrPng);
 
   // Como el PDF oficial de ARCA: una página por copia, idénticas salvo el título.
-  for (const copia of COPIAS) {
+  const copias = esExportacion(d.cbteTipo) ? COPIAS_E : COPIAS_C;
+  for (const copia of copias) {
     agregarPagina(doc, fuentes, qrImg, d, copia);
   }
   return doc.save();
@@ -176,7 +221,7 @@ function agregarPagina(
   { fuente, negrita, cursiva, negritaCursiva }: Fuentes,
   qrImg: PDFImage,
   d: DatosPdf,
-  etiquetaCopia: (typeof COPIAS)[number]
+  etiquetaCopia: string
 ): void {
   const page: PDFPage = doc.addPage(A4);
 
@@ -231,7 +276,8 @@ function agregarPagina(
     return lineas.length;
   };
 
-  const [titulo, codigo] = TIPOS_CBTE[d.cbteTipo] ?? TIPOS_CBTE[FACTURA_C];
+  const [titulo, codigo, letra] = TIPOS_CBTE[d.cbteTipo] ?? TIPOS_CBTE[FACTURA_C];
+  const expo = d.exterior;
   const sim = SIMBOLO_MONEDA[d.moneda];
   const centro = (X0 + X1) / 2;
   const importe = fmtImporte(d.importeTotal);
@@ -255,7 +301,7 @@ function agregarPagina(
     x: centro - 24, y: y - 40, width: 48, height: 40,
     borderColor: NEGRO, borderWidth: 0.8,
   });
-  centrado("C", centro, y - 24, negrita, 22);
+  centrado(letra, centro, y - 24, negrita, 22);
   centrado(codigo, centro, y - 36, fuente, 6);
 
   // columna izquierda: emisor (nombre centrado, como el oficial)
@@ -275,8 +321,13 @@ function agregarPagina(
   let yDer = y - 22;
   tx(titulo, xDer, yDer, negrita, 15);
   yDer -= 18;
-  const finPv = labelValor("Punto de Venta:", String(d.ptoVta).padStart(5, "0"), xDer, yDer);
-  labelValor("Comp. Nro:", String(d.numero).padStart(8, "0"), finPv + 12, yDer);
+  if (expo) {
+    // En la E, ARCA imprime el número completo en un solo campo.
+    labelValor("Compr. Nro:", numeroCompleto(d.ptoVta, d.numero), xDer, yDer);
+  } else {
+    const finPv = labelValor("Punto de Venta:", String(d.ptoVta).padStart(5, "0"), xDer, yDer);
+    labelValor("Comp. Nro:", String(d.numero).padStart(8, "0"), finPv + 12, yDer);
+  }
   yDer -= 12;
   labelValor("Fecha de Emisión:", fmtFecha(d.fecha), xDer, yDer);
   yDer -= 12;
@@ -285,14 +336,20 @@ function agregarPagina(
   labelValor("Ingresos Brutos:", String(d.emisor.cuit), xDer, yDer);
   yDer -= 12;
   labelValor("Fecha de Inicio de Actividades:", d.emisor.inicioActividades ?? "-", xDer, yDer);
+  if (expo) {
+    // La leyenda que ARCA imprime en toda Factura E: la exportación de
+    // servicios está exenta de IVA (art. 8 inc. d, Ley del IVA).
+    yDer -= 12;
+    tx("IVA EXENTO OPERACIÓN DE EXPORTACIÓN", xDer, yDer, fuente, 8);
+  }
 
   y = Math.min(yIzq, yDer) - 12;
   // divisor vertical entre columnas, del recuadro de la letra para abajo
   page.drawLine({ start: { x: centro, y: yCab - 40 }, end: { x: centro, y }, thickness: 0.8, color: NEGRO });
   hline(y);
 
-  // --- período facturado y vencimiento (solo servicios) ----------------------
-  if (usaPeriodo(d.concepto)) {
+  // --- período facturado y vencimiento (solo servicios; no existe en la E) ---
+  if (!expo && usaPeriodo(d.concepto)) {
     y -= 15;
     // posiciones fijas, como el oficial
     labelValor("Período Facturado Desde:", fmtFecha(d.servDesde ?? d.fecha), X0 + 10, y);
@@ -304,7 +361,38 @@ function agregarPagina(
 
   // --- receptor ---------------------------------------------------------------
   y -= 15;
-  if (d.receptor !== null && d.receptor.docTipo !== DOC_TIPO_CF) {
+  if (expo) {
+    // Cliente del exterior: no tiene CUIT argentino ni condición frente al
+    // IVA — lo identifica el CUIT País que asigna ARCA por país y tipo de
+    // persona.
+    labelValor("Señor(es):", expo.nombre, X0 + 10, y);
+    const lineasDom = labelValorEnvuelto("Domicilio:", expo.domicilio, X_COL2 + 60, y, X1 - 10);
+    y -= (lineasDom - 1) * 10 + 12;
+    labelValor(
+      "CUIT País:",
+      expo.cuitPaisDesc ? `${expo.cuitPais} (${expo.cuitPaisDesc})` : String(expo.cuitPais),
+      X0 + 10,
+      y
+    );
+    y -= 8;
+    hline(y);
+
+    // Bloque propio de la E: en qué divisa y a qué país va el comprobante.
+    y -= 15;
+    labelValor("Divisa:", MONEDA_PDF_CORTA[d.moneda], X0 + 10, y);
+    y -= 12;
+    labelValor("Destino del Comprobante:", expo.paisDestinoDesc ?? "-", X0 + 10, y);
+    y -= 8;
+    hline(y);
+
+    // Forma de pago: OJO, en la E este dato viaja al web service (Forma_pago),
+    // no es solo del PDF como la "condición de venta" de la Factura C.
+    // (el hline de cierre lo pone el bloque común de abajo)
+    y -= 15;
+    labelValor("Forma de Pago:", expo.formaPago ?? "", X0 + 10, y);
+    labelValor("Fecha de Pago:", fmtFecha(expo.fechaPago ?? d.fecha), X0 + 245, y);
+    labelValor("Incoterms:", expo.incoterms ?? "", X0 + 390, y);
+  } else if (d.receptor !== null && d.receptor.docTipo !== DOC_TIPO_CF) {
     const r = d.receptor;
     // ARCA imprime el documento sin guiones ni puntos
     const etiqueta = r.docTipo === DOC_TIPO_CUIT ? "CUIT:" : "DNI:";
@@ -351,16 +439,26 @@ function agregarPagina(
   // --- tabla de detalle --------------------------------------------------------
   // Mismas columnas que el facturador de ARCA. La cantidad es siempre 1: el
   // monto que se factura ES el total (modelo de este CLI).
-  const columnas: { titulo: string; w: number; alinDer?: boolean }[] = [
-    { titulo: "Código", w: 40 },
-    { titulo: "Producto / Servicio", w: 0 }, // flexible
-    { titulo: "Cantidad", w: 46, alinDer: true },
-    { titulo: "U. Medida", w: 50 },
-    { titulo: `Precio Unit. (${sim})`, w: 74, alinDer: true },
-    { titulo: "% Bonif", w: 40, alinDer: true },
-    { titulo: `Imp. Bonif. (${sim})`, w: 68, alinDer: true },
-    { titulo: `Subtotal (${sim})`, w: 74, alinDer: true },
-  ];
+  // La E tiene menos columnas que la C (no hay bonificaciones ni subtotal) y
+  // muestra cantidad y precio con 6 decimales, como el facturador de ARCA.
+  const columnas: { titulo: string; w: number; alinDer?: boolean }[] = expo
+    ? [
+        { titulo: "Ítem", w: 40 },
+        { titulo: "Descripción", w: 0 }, // flexible
+        { titulo: "Cantidad", w: 90, alinDer: true },
+        { titulo: `Precio Unit. (${sim})`, w: 110, alinDer: true },
+        { titulo: `Total por ítem (${sim})`, w: 100, alinDer: true },
+      ]
+    : [
+        { titulo: "Código", w: 40 },
+        { titulo: "Producto / Servicio", w: 0 }, // flexible
+        { titulo: "Cantidad", w: 46, alinDer: true },
+        { titulo: "U. Medida", w: 50 },
+        { titulo: `Precio Unit. (${sim})`, w: 74, alinDer: true },
+        { titulo: "% Bonif", w: 40, alinDer: true },
+        { titulo: `Imp. Bonif. (${sim})`, w: 68, alinDer: true },
+        { titulo: `Subtotal (${sim})`, w: 74, alinDer: true },
+      ];
   const fijo = columnas.reduce((acc, c) => acc + c.w, 0);
   columnas[1].w = X1 - X0 - fijo;
 
@@ -374,7 +472,9 @@ function agregarPagina(
   y -= 16;
 
   const lineasDesc = envolver(d.descripcion, fuente, 8, columnas[1].w - 6);
-  const valores = ["", "", "1,00", "unidades", importe, "0,00", "0,00", importe];
+  const valores = expo
+    ? ["0001", "", fmtSeisDecimales(1), fmtSeisDecimales(d.importeTotal), importe]
+    : ["", "", "1,00", "unidades", importe, "0,00", "0,00", importe];
   const yFila = y - 12;
   xCol = X0;
   columnas.forEach((c, i) => {
@@ -395,12 +495,19 @@ function agregarPagina(
 
   // --- totales -----------------------------------------------------------------
   y -= 14;
-  derecha(`Moneda: ${MONEDA_PDF[d.moneda]}`, X1 - 10, y, negrita, 8);
-  y -= 14;
-  labelValorDerecha("Subtotal:", `${sim} ${importe}`, X1 - 10, y);
-  y -= 13;
-  labelValorDerecha("Importe Otros Tributos:", `${sim} 0,00`, X1 - 10, y);
-  y -= 16;
+  if (expo) {
+    // La E no discrimina subtotal ni otros tributos: es una operación exenta,
+    // va directo al total.
+    derecha(`Divisa: ${MONEDA_PDF_CORTA[d.moneda]}`, X1 - 10, y, negrita, 8);
+    y -= 16;
+  } else {
+    derecha(`Moneda: ${MONEDA_PDF[d.moneda]}`, X1 - 10, y, negrita, 8);
+    y -= 14;
+    labelValorDerecha("Subtotal:", `${sim} ${importe}`, X1 - 10, y);
+    y -= 13;
+    labelValorDerecha("Importe Otros Tributos:", `${sim} 0,00`, X1 - 10, y);
+    y -= 16;
+  }
   const totalTxt = `${sim} ${importe}`;
   const wTotal = ancho("Importe Total:", negrita, 11) + 4 + ancho(totalTxt, negrita, 11);
   tx("Importe Total:", X1 - 10 - wTotal, y, negrita, 11);

@@ -81,3 +81,53 @@ describe("totalFacturado12m", () => {
     expect(totalFacturado12m(true, "2026-07-14")).toBe(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Comprobantes de exportación (Factura E)
+// ---------------------------------------------------------------------------
+const facturaE: Comprobante = {
+  ...base,
+  cbteTipo: 19,
+  ptoVta: 6,
+  numero: 1,
+  docTipo: 80, // en el QR de una E, el CUIT País va como DocTipo 80
+  docNro: 55000004293,
+  condIva: 0,
+  cuitPais: 55000004293,
+  clienteExterior: "Proxify",
+  paisDestino: 429,
+  tipoExpo: 2,
+  formaPago: "Criptomonedas",
+  fechaPago: "2026-07-01",
+  idRequest: 42,
+};
+
+describe("exportación en el log", () => {
+  it("guarda y relee los campos propios de la Factura E", () => {
+    registrarComprobante(facturaE);
+    const c = leerComprobantes()[0];
+    expect(c.cuitPais).toBe(55000004293);
+    expect(c.clienteExterior).toBe("Proxify");
+    expect(c.formaPago).toBe("Criptomonedas");
+    // El Id de request es la clave para reintentar sin duplicar: tiene que
+    // sobrevivir al log sí o sí.
+    expect(c.idRequest).toBe(42);
+  });
+
+  it("la Factura E suma al tope de monotributo igual que la C", () => {
+    registrarComprobante({ ...base, importeTotal: 100000 });
+    registrarComprobante({ ...facturaE, importeTotal: 50000 });
+    expect(totalFacturado12m(base.produccion, "2026-07-15")).toBe(150000);
+  });
+
+  it("la nota de crédito de exportación (21) resta, igual que la 13", () => {
+    registrarComprobante({ ...facturaE, importeTotal: 50000 });
+    registrarComprobante({ ...facturaE, cbteTipo: 21, numero: 2, importeTotal: 20000 });
+    expect(totalFacturado12m(base.produccion, "2026-07-15")).toBe(30000);
+  });
+
+  it("una E en dólares se cuenta convertida a pesos", () => {
+    registrarComprobante({ ...facturaE, moneda: "DOL", cotizacion: 1000, importeTotal: 3000 });
+    expect(totalFacturado12m(base.produccion, "2026-07-15")).toBe(3000000);
+  });
+});

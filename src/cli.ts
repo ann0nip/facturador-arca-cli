@@ -17,19 +17,20 @@ import { parsearMonto } from "./core/domain.js";
 
 const pkg = createRequire(import.meta.url)("../package.json") as { version: string };
 
-const AYUDA = `🧾 facturador-arca ${pkg.version} — Factura C en ARCA desde la terminal
+const AYUDA = `🧾 facturador-arca ${pkg.version} — Factura C y E en ARCA desde la terminal
 
 Uso:
-  facturar <monto> [template] [opciones]    Emitir una Factura C
+  facturar <monto> [template] [opciones]    Emitir una factura
   facturar init                             Configuración inicial (emisor + certificado)
   facturar template add [nombre]            Crear un template (receptor con nombre)
   facturar template list | show | remove    Gestionar templates
 
 Ejemplos:
   facturar 15000                            A consumidor final, hoy
-  facturar 3000 acme --vto 10/07      Con template; el pago vence el 10/07
+  facturar 3000 acme --vto 10/07            Con template; el pago vence el 10/07
   facturar 15000 20-12345678-6              A un CUIT puntual (pregunta cond. IVA)
   facturar 15000 --fecha 26/06 --periodo 01/06-30/06
+  facturar 3000 proxify                     Factura E si el template es del exterior
 
 Opciones de emisión:
   --fecha dd/mm        Fecha del comprobante (retroactiva: 10 días servicios / 5 productos)
@@ -39,6 +40,14 @@ Opciones de emisión:
   --moneda PES|DOL     Pisa la moneda del template
   --cotizacion N       Fuerza el tipo de cambio (default: cotización oficial de ARCA)
   --si                 Emitir sin pedir confirmación (para scripts)
+
+Factura E (exportación de servicios):
+  Un template con cliente del exterior emite Factura E por WSFEX, no Factura C.
+  Se crea con: facturar template add <nombre> → «Un cliente del exterior».
+  Requiere el servicio wsfex habilitado para tu certificado y un punto de venta
+  aparte, tipo «Comprobantes de Exportación - Webservices» ("puntoVentaExportacion").
+  Diferencias: la fecha admite ±5 días (incluso futura), no hay período de
+  servicio, y --vto es la fecha de pago.
 
 Más info: https://github.com/ann0nip/facturador-arca-cli`;
 

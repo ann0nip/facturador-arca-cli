@@ -13,7 +13,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import type { Concepto, Moneda } from "./domain.js";
-import { NOTA_CREDITO_C } from "./domain.js";
+import { NOTA_CREDITO_C, NOTA_CREDITO_E } from "./domain.js";
 import { logPath } from "../config.js";
 
 export interface Comprobante {
@@ -41,6 +41,23 @@ export interface Comprobante {
   template?: string;
   /** Para NC: número de la factura asociada. */
   asociadoNro?: number;
+
+  // --- solo comprobantes de exportación (cbteTipo 19/20/21, vía WSFEX) ------
+  // Snapshot del receptor del exterior, que no entra en docTipo/docNro.
+  cuitPais?: number;
+  clienteExterior?: string;
+  paisDestino?: number;
+  tipoExpo?: number;
+  /** Forma_pago: a diferencia de la Factura C, es dato del comprobante. */
+  formaPago?: string;
+  /** Fecha_pago del WSFEX, ISO (aaaa-mm-dd). */
+  fechaPago?: string;
+  /**
+   * Id del request de WSFEX. Es la clave de idempotencia: si una emisión
+   * quedó en duda, reenviar este mismo Id devuelve el CAE original en vez de
+   * duplicar el comprobante.
+   */
+  idRequest?: number;
   /** false = homologación. Nunca mezclar al reportar. */
   produccion: boolean;
   /** Timestamp de emisión, ISO completo. */
@@ -75,6 +92,9 @@ export function leerComprobantes(): Comprobante[] {
  * Facturado neto (facturas − NC) de los últimos 12 meses, EN PESOS, como lo
  * mira ARCA para el monotributo. Moneda extranjera → pesos a la cotización
  * del comprobante. Solo cuenta el entorno indicado (test y real no se mezclan).
+ *
+ * Las Facturas E cuentan igual que las C: la exportación de servicios suma
+ * para el tope de la categoría de monotributo.
  */
 export function totalFacturado12m(produccion: boolean, hoyIso: string): number {
   const desde = new Date(new Date(hoyIso).getTime() - 365 * 24 * 3600 * 1000)
@@ -85,7 +105,8 @@ export function totalFacturado12m(produccion: boolean, hoyIso: string): number {
     if (c.produccion !== produccion) continue;
     if (c.fecha < desde || c.fecha > hoyIso) continue;
     const enPesos = c.importeTotal * (c.moneda === "PES" ? 1 : c.cotizacion);
-    total += c.cbteTipo === NOTA_CREDITO_C ? -enPesos : enPesos;
+    const esNc = c.cbteTipo === NOTA_CREDITO_C || c.cbteTipo === NOTA_CREDITO_E;
+    total += esNc ? -enPesos : enPesos;
   }
   return Math.round(total * 100) / 100;
 }

@@ -13,6 +13,7 @@ import {
   borrarTemplate,
   listarTemplates,
   nombreTemplateValido,
+  descripcionTemplate,
   type Emisor,
 } from "../src/config.js";
 import { DOC_TIPO_CUIT } from "../src/core/domain.js";
@@ -182,5 +183,81 @@ describe("templates", () => {
       JSON.stringify({ nombre: "roto2", receptor: { docTipo: "80", docNro: 1, condIva: 1 } })
     );
     expect(() => cargarTemplate("roto2")).toThrow(/mal formado/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Templates de exportación (Factura E)
+// ---------------------------------------------------------------------------
+const exteriorOk = {
+  cuitPais: 55000004293,
+  nombre: "Proxify",
+  domicilio: "Barnhusgatan 3, Stockholm, 11123",
+  paisDestino: 429,
+  cuitPaisDesc: "SUECIA - Persona Jurídica",
+  paisDestinoDesc: "SUECIA",
+  tipoExpo: 2 as const,
+  idioma: 1 as const,
+  formaPago: "Criptomonedas",
+};
+
+describe("template de exportación", () => {
+  it("va y vuelve del disco intacto", () => {
+    guardarTemplate({ nombre: "proxify", receptor: null, exterior: exteriorOk });
+    expect(cargarTemplate("proxify")?.exterior).toEqual(exteriorOk);
+  });
+
+  it("descripcionTemplate lo muestra como cliente del exterior", () => {
+    guardarTemplate({ nombre: "proxify", receptor: null, exterior: exteriorOk });
+    expect(descripcionTemplate(cargarTemplate("proxify")!)).toMatch(/Exterior \(SUECIA\)/);
+  });
+
+  it("los templates viejos siguen cargando igual (sin bloque exterior)", () => {
+    guardarTemplate({
+      nombre: "acme",
+      receptor: { docTipo: DOC_TIPO_CUIT, docNro: 30111111118, condIva: 1 },
+    });
+    const t = cargarTemplate("acme")!;
+    expect(t.exterior).toBeUndefined();
+    expect(t.receptor?.docNro).toBe(30111111118);
+  });
+
+  describe("validación (los templates se editan a mano)", () => {
+    const guardarCrudo = (exterior: Record<string, unknown>) => {
+      fs.mkdirSync(path.join(tmpDir, "templates"), { recursive: true });
+      fs.writeFileSync(
+        path.join(tmpDir, "templates", "malo.json"),
+        JSON.stringify({ nombre: "malo", receptor: null, exterior })
+      );
+    };
+
+    it("rechaza un CUIT argentino donde va un CUIT País", () => {
+      // 20372114356 es un CUIT válido: pasa el dígito verificador. Lo que lo
+      // descalifica es el prefijo, no el algoritmo.
+      guardarCrudo({ ...exteriorOk, cuitPais: 20372114356 });
+      expect(() => cargarTemplate("malo")).toThrow(/no es un CUIT País/);
+    });
+
+    it("rechaza si falta el nombre del cliente (ARCA lo exige)", () => {
+      guardarCrudo({ ...exteriorOk, nombre: "" });
+      expect(() => cargarTemplate("malo")).toThrow(/falta nombre/);
+    });
+
+    it("rechaza si falta el domicilio", () => {
+      guardarCrudo({ ...exteriorOk, domicilio: "  " });
+      expect(() => cargarTemplate("malo")).toThrow(/falta domicilio/);
+    });
+
+    it("rechaza un país destino que no sea código numérico", () => {
+      guardarCrudo({ ...exteriorOk, paisDestino: "SUECIA" });
+      expect(() => cargarTemplate("malo")).toThrow(/paisDestino/);
+    });
+
+    it("rechaza tipoExpo e idioma fuera de las tablas de ARCA", () => {
+      guardarCrudo({ ...exteriorOk, tipoExpo: 3 });
+      expect(() => cargarTemplate("malo")).toThrow(/tipoExpo/);
+      guardarCrudo({ ...exteriorOk, idioma: 9 });
+      expect(() => cargarTemplate("malo")).toThrow(/idioma/);
+    });
   });
 });
