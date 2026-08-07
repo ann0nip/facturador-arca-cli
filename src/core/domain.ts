@@ -13,6 +13,18 @@
 export const FACTURA_C = 11;
 export const NOTA_CREDITO_C = 13;
 
+// Comprobantes de EXPORTACIÓN (clase E). No los emite el WSFEv1: van por
+// WSFEX, que es otro web service — ver wsfex.ts y docs/factura-e-plan.md.
+// Confirmados contra FEXGetPARAM_Cbte_Tipo (homologación, ago-2026).
+export const FACTURA_E = 19;
+export const NOTA_DEBITO_E = 20;
+export const NOTA_CREDITO_E = 21;
+
+/** true si el comprobante se autoriza por WSFEX en vez de WSFEv1. */
+export function esExportacion(cbteTipo: number): boolean {
+  return cbteTipo === FACTURA_E || cbteTipo === NOTA_DEBITO_E || cbteTipo === NOTA_CREDITO_E;
+}
+
 // Tipos de documento del receptor
 export const DOC_TIPO_CUIT = 80;
 export const DOC_TIPO_DNI = 96;
@@ -160,6 +172,27 @@ export function validarFecha(f: Fecha, concepto: Concepto): string | null {
   return null;
 }
 
+/**
+ * Ventana de fechas de WSFEX: ±5 días corridos alrededor de hoy.
+ *
+ * NO es la regla del WSFEv1 (10 días para atrás con servicios, futuro
+ * prohibido): verificado contra homologación en ago-2026, WSFEX responde
+ * «[1500] Campo fecha_cbte: La fecha debe estar incluida en el periodo
+ * 20260801 - 20260811» estando en el 06/08. O sea acepta hasta 5 días para
+ * ADELANTE, y solo 5 para atrás aunque sean servicios.
+ */
+export const DIAS_VENTANA_EXPO = 5;
+
+/** null si la fecha es emitible por WSFEX; si no, el mensaje para el usuario. */
+export function validarFechaExpo(f: Fecha, hoy: Fecha = hoyAr()): string | null {
+  const desde = addDias(hoy, -DIAS_VENTANA_EXPO);
+  const hasta = addDias(hoy, DIAS_VENTANA_EXPO);
+  if (cmpFecha(f, desde) < 0 || cmpFecha(f, hasta) > 0) {
+    return `Para Factura E la fecha tiene que estar entre el ${fmtFecha(desde)} y el ${fmtFecha(hasta)} (±${DIAS_VENTANA_EXPO} días).`;
+  }
+  return null;
+}
+
 /** Dos fechas en un texto: "01/06-30/06", "01/06 al 30/06"... null si no. */
 export function parsearPeriodo(texto: string): [Fecha, Fecha] | null {
   const fechas = texto.match(/\d{1,2}\/\d{1,2}(?:\/\d{2,4})?/g);
@@ -285,6 +318,76 @@ export function descripcionReceptor(r: Receptor): string {
 }
 
 // ---------------------------------------------------------------------------
+// Exportación — el receptor del exterior (Factura E / WSFEX)
+// ---------------------------------------------------------------------------
+// Todos los códigos de acá abajo salen de las tablas de parámetros del propio
+// WSFEX (FEXGetPARAM_*), consultadas en homologación en ago-2026.
+
+/** Campo Tipo_expo del WSFEX. */
+export type TipoExpo = 1 | 2 | 4;
+
+export const TIPO_EXPO_DESC: Record<TipoExpo, string> = {
+  1: "Exportación definitiva de Bienes",
+  2: "Servicios",
+  4: "Otros",
+};
+
+/** Campo Idioma_cbte del WSFEX (obligatorio). */
+export type Idioma = 1 | 2 | 3;
+
+export const IDIOMA_DESC: Record<Idioma, string> = {
+  1: "Español",
+  2: "Inglés",
+  3: "Portugués",
+};
+
+// Unidades de medida (FEXGetPARAM_UMed). Un servicio no tiene unidad física:
+// se factura 1 "unidad" del servicio, como hace el resto del CLI.
+export const UMED_UNIDADES = 7;
+export const UMED_OTRAS = 98;
+
+/** Condición IVA "Cliente del Exterior" — dato del PDF, no viaja en WSFEX. */
+export const COND_IVA_EXTERIOR = 9;
+
+/**
+ * El receptor de una Factura E: no tiene DocTipo/DocNro ni condición de IVA,
+ * tiene CUIT País y un país de destino.
+ */
+export interface ReceptorExterior {
+  /** CUIT País del cliente (FEXGetPARAM_DST_CUIT). Ej: 55000004293 = Suecia PJ. */
+  cuitPais: number;
+  /** Nombre o razón social, tal cual va impreso y viaja en el campo Cliente. */
+  nombre: string;
+  /** Domicilio en el exterior. */
+  domicilio: string;
+  /** Código de país destino del comprobante (FEXGetPARAM_DST_pais). Suecia = 429. */
+  paisDestino: number;
+  /** Identificación tributaria del cliente en su país (VAT, EIN...). Opcional. */
+  idImpositivo?: string;
+}
+
+/**
+ * Los CUIT País tienen 11 dígitos y arrancan con 50 (persona física), 51 u
+ * 55 (persona jurídica).
+ *
+ * ⚠️ NO se los puede distinguir de un CUIT argentino por el dígito
+ * verificador: verificado contra la tabla completa de FEXGetPARAM_DST_CUIT
+ * (777 entradas, ago-2026), 774 lo cumplen — o sea, parsearCuit() los daría
+ * por válidos. Lo que SÍ los distingue es el prefijo: ningún CUIT País usa un
+ * prefijo argentino (20/23/24/27/30/33/34) y ningún CUIT argentino arranca
+ * con 5. Por eso esta función mira el prefijo y no el verificador.
+ */
+export function esCuitPais(nro: number | string): boolean {
+  return /^5[015]\d{9}$/.test(String(nro).replace(/[-.\s]/g, ""));
+}
+
+/** Un CUIT País válido en forma numérica, o null. La tabla real la valida WSFEX. */
+export function parsearCuitPais(texto: string): number | null {
+  const t = texto.trim().replace(/[-.\s]/g, "");
+  return esCuitPais(t) ? Number(t) : null;
+}
+
+// ---------------------------------------------------------------------------
 // Monedas
 // ---------------------------------------------------------------------------
 // El WSFE acepta moneda extranjera: MonId + MonCotiz (cotización oficial que
@@ -342,9 +445,17 @@ export function urlQrArca(d: DatosQr): string {
   return `https://www.afip.gob.ar/fe/qr/?p=${payload}`;
 }
 
-/** "Factura-C-00003-00000042" / "NC-C-...": nombre de archivo del comprobante. */
+const PREFIJO_ARCHIVO: Record<number, string> = {
+  [FACTURA_C]: "Factura-C",
+  [NOTA_CREDITO_C]: "NC-C",
+  [FACTURA_E]: "Factura-E",
+  [NOTA_DEBITO_E]: "ND-E",
+  [NOTA_CREDITO_E]: "NC-E",
+};
+
+/** "Factura-C-00003-00000042" / "Factura-E-...": nombre de archivo del comprobante. */
 export function nombreComprobante(cbteTipo: number, ptoVta: number, nro: number): string {
-  const prefijo = cbteTipo === NOTA_CREDITO_C ? "NC-C" : "Factura-C";
+  const prefijo = PREFIJO_ARCHIVO[cbteTipo] ?? "Factura-C";
   return `${prefijo}-${String(ptoVta).padStart(5, "0")}-${String(nro).padStart(8, "0")}`;
 }
 

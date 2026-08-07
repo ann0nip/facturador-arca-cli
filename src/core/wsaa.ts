@@ -85,7 +85,13 @@ export function firmarCms(traXml: string, certPem: string, keyPem: string): stri
 // ---------------------------------------------------------------------------
 // 3) LoginCms: canjear el CMS por el ticket
 // ---------------------------------------------------------------------------
-function escaparXml(s: string): string {
+/**
+ * Escapa texto para meterlo en un XML. En WSFEv1 no hacía falta (todo lo que
+ * viaja son números), pero WSFEX manda texto libre del usuario — nombre del
+ * cliente, domicilio, forma de pago, descripción — y un `&` suelto rompe el
+ * request.
+ */
+export function escaparXml(s: string): string {
   return s
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")

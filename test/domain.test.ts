@@ -26,6 +26,12 @@ import {
   urlQrArca,
   nombreComprobante,
   numeroCompleto,
+  esExportacion,
+  esCuitPais,
+  parsearCuitPais,
+  validarFechaExpo,
+  FACTURA_E,
+  NOTA_CREDITO_E,
 } from "../src/core/domain.js";
 
 describe("parsearMonto", () => {
@@ -252,7 +258,80 @@ describe("nombres de comprobante", () => {
     expect(nombreComprobante(11, 3, 42)).toBe("Factura-C-00003-00000042");
     expect(nombreComprobante(13, 3, 7)).toBe("NC-C-00003-00000007");
   });
+  it("nombreComprobante para exportación", () => {
+    expect(nombreComprobante(FACTURA_E, 6, 1)).toBe("Factura-E-00006-00000001");
+    expect(nombreComprobante(NOTA_CREDITO_E, 6, 2)).toBe("NC-E-00006-00000002");
+  });
   it("numeroCompleto", () => {
     expect(numeroCompleto(3, 42)).toBe("00003-00000042");
+  });
+});
+
+describe("exportación", () => {
+  it("esExportacion distingue los comprobantes que van por WSFEX", () => {
+    expect([19, 20, 21].map(esExportacion)).toEqual([true, true, true]);
+    expect([11, 13, 1, 6].map(esExportacion)).toEqual([false, false, false, false]);
+  });
+
+  describe("validarFechaExpo", () => {
+    // ARCA (homologación, 06/08/2026) devuelve para una fecha fuera de rango:
+    // «[1500] La fecha debe estar incluida en el periodo 20260801 - 20260811»
+    const hoy = { y: 2026, m: 8, d: 6 };
+
+    it("acepta la ventana completa ±5 días", () => {
+      for (const d of [1, 3, 6, 9, 11]) {
+        expect(validarFechaExpo({ y: 2026, m: 8, d }, hoy), `día ${d}`).toBeNull();
+      }
+    });
+
+    it("acepta fechas FUTURAS, al revés que la Factura C", () => {
+      expect(validarFechaExpo({ y: 2026, m: 8, d: 11 }, hoy)).toBeNull();
+      // la misma fecha, por WSFEv1, sería rechazada por futura
+      expect(validarFecha({ y: 2026, m: 8, d: 11 }, 2)).not.toBeNull();
+    });
+
+    it("rechaza fuera de la ventana, con las dos puntas en el mensaje", () => {
+      expect(validarFechaExpo({ y: 2026, m: 7, d: 31 }, hoy)).toMatch(/01\/08\/2026.*11\/08\/2026/);
+      expect(validarFechaExpo({ y: 2026, m: 8, d: 12 }, hoy)).not.toBeNull();
+    });
+
+    it("la retroactividad es de 5 días aunque sean servicios (WSFEv1 da 10)", () => {
+      expect(diasAtrasMax(2)).toBe(10); // Factura C servicios
+      expect(validarFechaExpo({ y: 2026, m: 7, d: 30 }, hoy)).not.toBeNull(); // 7 días atrás
+    });
+  });
+
+  describe("CUIT País", () => {
+    // Los prefijos salen de la tabla completa de FEXGetPARAM_DST_CUIT
+    // (777 entradas: 50 = persona física, 51 = otro, 55 = persona jurídica).
+    it("acepta los tres prefijos reales", () => {
+      expect(parsearCuitPais("55000004293")).toBe(55000004293); // Suecia PJ (Proxify)
+      expect(parsearCuitPais("50000000016")).toBe(50000000016); // Uruguay PF
+      expect(esCuitPais(51000000014)).toBe(true);
+    });
+
+    it("acepta separadores, como parsearCuit", () => {
+      expect(parsearCuitPais(" 55-00000429-3 ")).toBe(55000004293);
+    });
+
+    it("rechaza CUIT argentinos y basura", () => {
+      expect(parsearCuitPais("20372114356")).toBeNull(); // CUIT AR válido
+      expect(parsearCuitPais("30111111118")).toBeNull();
+      expect(parsearCuitPais("5500000429")).toBeNull(); // 10 dígitos
+      expect(parsearCuitPais("52000000000")).toBeNull(); // prefijo 52 no existe
+      expect(parsearCuitPais("abc")).toBeNull();
+    });
+
+    it("NO se lo puede distinguir por el dígito verificador", () => {
+      // Verificado contra las 777 entradas de la tabla real: 774 pasan el
+      // algoritmo del CUIT argentino. Si se validara así, un CUIT País se
+      // colaría como CUIT nacional — por eso parsearCuitPais mira el prefijo.
+      expect(parsearCuit("55000004293")).toBe(55000004293);
+      expect(parsearCuit("50000000016")).toBe(50000000016);
+      // Y hay excepciones que tampoco lo pasan (Granada, Samoa Occidental):
+      // ni siquiera sirve como heurística inversa.
+      expect(parsearCuit("55000005069")).toBeNull();
+      expect(esCuitPais("55000005069")).toBe(true);
+    });
   });
 });
