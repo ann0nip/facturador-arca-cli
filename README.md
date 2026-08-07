@@ -1,6 +1,7 @@
 # 🧾 facturador-arca
 
-Emití **Factura C en ARCA** (ex-AFIP) desde la terminal, en un comando:
+Emití **Factura C y Factura E en ARCA** (ex-AFIP) desde la terminal, en un
+comando:
 
 ```bash
 facturar 3000 acme --vto 10/07
@@ -19,6 +20,9 @@ Para **monotributistas**. Multiplataforma (macOS / Windows / Linux).
 - 💵 **Moneda extranjera de primera clase**: facturá en USD con la
   cotización oficial de ARCA consultada automáticamente al emitir, pago en
   la misma moneda, y el PDF con la leyenda legal del total en pesos.
+- 🌎 **Factura E (exportación de servicios)**: si el cliente es del exterior,
+  el mismo comando emite Factura E por WSFEX — con CUIT País, país destino y
+  forma de pago. Sin flag nuevo: lo decide el template.
 - 📄 **PDF idéntico al oficial**, generado en tu máquina, con el QR
   obligatorio (RG 4892/2020). Sin cuotas ni links que vencen.
 - 🏷 **Templates**: guardá cada cliente una vez (`facturar template add acme`)
@@ -101,6 +105,41 @@ Se guardan como JSON editable (ej. `~/.config/facturador/templates/`):
 }
 ```
 
+## Factura E — exportación de servicios
+
+Si le facturás a un cliente del exterior, elegí **«Un cliente del exterior»**
+en `facturar template add`. El wizard trae de ARCA las tablas de países y de
+CUIT País y te las hace elegir de una lista: son códigos que asigna ARCA y no
+hay forma de deducirlos.
+
+```bash
+facturar template add proxify     # → "Un cliente del exterior"
+facturar 3000 proxify             # emite Factura E, no C
+```
+
+Es el **mismo comando**: el template decide. Pero por dentro va a otro web
+service (WSFEX) y cambian varias reglas:
+
+| | Factura C | Factura E |
+|---|---|---|
+| Receptor | CUIT/DNI + condición IVA | CUIT País + país destino |
+| Fechas | hasta 10 días atrás, futuro prohibido | **±5 días**, futuro permitido |
+| Período facturado | `--periodo` | no existe |
+| `--vto` | vencimiento de pago | **fecha de pago** (dato del WS) |
+| Forma de pago | solo texto del PDF | **viaja a ARCA** |
+| Descripción | solo texto del PDF | **viaja a ARCA** |
+
+Hace falta un poco de trámite en ARCA, una sola vez:
+
+1. Habilitar el servicio **`wsfex`** para tu certificado (aparte de `wsfe`),
+   en «Administrador de Relaciones de Clave Fiscal».
+2. Dar de alta un punto de venta **aparte**, de tipo «Comprobantes de
+   Exportación - Webservices» — ARCA no deja reusar el de la Factura C. Se
+   configura con `"puntoVentaExportacion"` en el `config.json`.
+
+Si falta alguna de las dos, el comando te lo dice con las instrucciones
+exactas en vez de fallar contra ARCA.
+
 ### Dónde vive todo
 
 | Qué | Dónde (macOS/Linux) |
@@ -128,10 +167,11 @@ archivo.
 
 ## Alcance (honesto)
 
-Hoy emite **Factura C** (monotributo), en pesos o dólares, a consumidor
-final o receptor identificado. No hace (todavía): notas de crédito por
-comando, resúmenes/CSV, Factura A/B/E, email al cliente. El core ya soporta
-varias de esas cosas — ver ideas de v2 en el repo. PRs bienvenidos.
+Hoy emite **Factura C** (monotributo) a consumidor final o receptor
+identificado, y **Factura E** (exportación de servicios) a clientes del
+exterior — en pesos o dólares las dos. No hace (todavía): notas de crédito
+por comando, resúmenes/CSV, Factura A/B, email al cliente. El core ya
+soporta varias de esas cosas — ver ideas de v2 en el repo. PRs bienvenidos.
 
 Inspirado en [facturador-arca (bot de Telegram)](https://github.com/Lanuti-Franco/facturador-arca),
 del que hereda el conocimiento de dominio validado contra el WSFE real.

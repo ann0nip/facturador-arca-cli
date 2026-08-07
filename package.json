@@ -1,14 +1,17 @@
 {
   "name": "facturador-arca",
-  "version": "0.1.1",
-  "description": "Emití Factura C en ARCA (ex-AFIP) desde la terminal: CAE + PDF con QR, sin intermediarios. Para monotributistas.",
+  "version": "0.2.0",
+  "description": "Emití Factura C y Factura E (exportación) en ARCA (ex-AFIP) desde la terminal: CAE + PDF con QR, sin intermediarios. Para monotributistas.",
   "keywords": [
     "arca",
     "afip",
     "factura",
     "factura-electronica",
+    "factura-e",
+    "exportacion",
     "monotributo",
     "wsfe",
+    "wsfex",
     "wsaa",
     "cae",
     "argentina",
@@ -28,7 +31,7 @@
   },
   "files": [
     "dist",
-    "docs",
+    "docs/setup-arca.md",
     "README.md"
   ],
   "engines": {
